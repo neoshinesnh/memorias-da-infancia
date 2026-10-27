@@ -118,6 +118,17 @@ describe('panel cookie', () => {
     expect(header).toBe(
       `${PANEL_COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${PANEL_COOKIE_MAX_AGE_SECONDS}`,
     )
+    const previousPublicUrl = process.env.PUBLIC_URL
+    process.env.PUBLIC_URL = 'http://192.168.0.153:3000'
+    try {
+      const localHeader = buildPanelCookie(COOKIE_SECRET)
+      const localToken = readPanelToken(localHeader)
+      expect(localHeader).toBe(
+        `${PANEL_COOKIE_NAME}=${localToken}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${PANEL_COOKIE_MAX_AGE_SECONDS}`,
+      )
+    } finally {
+      restorePublicUrl(previousPublicUrl)
+    }
     expect(header).not.toContain(COOKIE_SECRET)
     const pair = `${PANEL_COOKIE_NAME}=${token}`
     expect(hasValidPanelCookie(pair, COOKIE_SECRET)).toBe(true)
@@ -215,3 +226,11 @@ describe('panel reset confirmation', () => {
     expect(repository.summarize().participating).toBe(EMPTY_COUNT)
   })
 })
+
+function restorePublicUrl(previous: string | undefined): void {
+  if (previous === undefined) {
+    delete process.env.PUBLIC_URL
+    return
+  }
+  process.env.PUBLIC_URL = previous
+}

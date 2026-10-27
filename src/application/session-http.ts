@@ -18,6 +18,10 @@ const COOKIE_SEPARATOR = ';'
 const NAME_VALUE_SEPARATOR = '='
 const HTTP_ONLY_FLAG = 'HttpOnly'
 const SECURE_FLAG = 'Secure'
+const HTTPS_PROTOCOL = 'https:'
+const LOCAL_HOST = 'localhost'
+const LOOPBACK_HOST = '127.0.0.1'
+const LOOPBACK_V6_HOST = '::1'
 const SAME_SITE_ATTRIBUTE = 'SameSite=Lax'
 const ROOT_PATH_ATTRIBUTE = 'Path=/'
 const MAX_AGE_ATTRIBUTE = 'Max-Age'
@@ -64,16 +68,48 @@ export type SessionFailure = {
   error: string
 }
 
+export function requiresSecureCookie(publicUrl: string | undefined): boolean {
+  if (publicUrl === undefined) {
+    return true
+  }
+  if (publicUrl.length === EMPTY_LENGTH) {
+    return true
+  }
+  let address: URL
+  try {
+    address = new URL(publicUrl)
+  } catch {
+    return true
+  }
+  if (address.protocol === HTTPS_PROTOCOL) {
+    return true
+  }
+  return isLoopbackHost(address.hostname)
+}
+
 export function buildSessionCookie(sessionId: string): string {
   const maxAge = `${MAX_AGE_ATTRIBUTE}=${SESSION_COOKIE_MAX_AGE_SECONDS}`
   return [
     `${SESSION_COOKIE_NAME}=${sessionId}`,
-    HTTP_ONLY_FLAG,
-    SECURE_FLAG,
-    SAME_SITE_ATTRIBUTE,
-    ROOT_PATH_ATTRIBUTE,
-    maxAge,
+    ...readCookieFlags(requiresSecureCookie(process.env.PUBLIC_URL), maxAge),
   ].join(`${COOKIE_SEPARATOR} `)
+}
+
+function readCookieFlags(secure: boolean, maxAge: string): readonly string[] {
+  if (!secure) {
+    return [HTTP_ONLY_FLAG, SAME_SITE_ATTRIBUTE, ROOT_PATH_ATTRIBUTE, maxAge]
+  }
+  return [HTTP_ONLY_FLAG, SECURE_FLAG, SAME_SITE_ATTRIBUTE, ROOT_PATH_ATTRIBUTE, maxAge]
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  if (hostname === LOCAL_HOST) {
+    return true
+  }
+  if (hostname === LOOPBACK_HOST) {
+    return true
+  }
+  return hostname === LOOPBACK_V6_HOST
 }
 
 export function readSessionId(cookieHeader: string | null): string | null {

@@ -1,5 +1,6 @@
 import { createHmac } from 'node:crypto'
 import { matchDigests } from '@/application/panel-password'
+import { requiresSecureCookie } from '@/application/session-http'
 
 const DIGEST_ALGORITHM = 'sha256'
 const TEXT_ENCODING = 'utf8'
@@ -46,12 +47,15 @@ export function buildPanelCookie(secret: string): string {
   const maxAge = `${MAX_AGE_ATTRIBUTE}=${PANEL_COOKIE_MAX_AGE_SECONDS}`
   return [
     `${PANEL_COOKIE_NAME}=${token}`,
-    HTTP_ONLY_FLAG,
-    SECURE_FLAG,
-    SAME_SITE_ATTRIBUTE,
-    ROOT_PATH_ATTRIBUTE,
-    maxAge,
+    ...readCookieFlags(requiresSecureCookie(process.env.PUBLIC_URL), maxAge),
   ].join(`${COOKIE_SEPARATOR} `)
+}
+
+function readCookieFlags(secure: boolean, maxAge: string): readonly string[] {
+  if (!secure) {
+    return [HTTP_ONLY_FLAG, SAME_SITE_ATTRIBUTE, ROOT_PATH_ATTRIBUTE, maxAge]
+  }
+  return [HTTP_ONLY_FLAG, SECURE_FLAG, SAME_SITE_ATTRIBUTE, ROOT_PATH_ATTRIBUTE, maxAge]
 }
 
 export function hasValidPanelCookie(cookieHeader: string | null, secret: string): boolean {

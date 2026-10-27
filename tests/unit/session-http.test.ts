@@ -19,6 +19,7 @@ import {
   assertMutationOrigin,
   buildSessionCookie,
   readSessionId,
+  requiresSecureCookie,
   resolveResumeStatus,
   resolveSessionFailure,
   toSessionPayload,
@@ -93,9 +94,24 @@ describe('session http decisions', () => {
 
   it('builds a persistent httpOnly cookie for 24 hours', () => {
     expect(SESSION_COOKIE_MAX_AGE_SECONDS).toBe(SECONDS_PER_DAY)
+    expect(requiresSecureCookie(PUBLIC_URL)).toBe(true)
+    expect(requiresSecureCookie('http://localhost:3000')).toBe(true)
+    expect(requiresSecureCookie('http://192.168.0.153:3000')).toBe(false)
     expect(buildSessionCookie(SESSION_ID)).toBe(
       `${SESSION_COOKIE_NAME}=${SESSION_ID}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${SECONDS_PER_DAY}`,
     )
+  })
+
+  it('omits Secure when PUBLIC_URL is plain http on the local network', () => {
+    const previous = process.env.PUBLIC_URL
+    process.env.PUBLIC_URL = 'http://192.168.0.153:3000'
+    try {
+      expect(buildSessionCookie(SESSION_ID)).toBe(
+        `${SESSION_COOKIE_NAME}=${SESSION_ID}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SECONDS_PER_DAY}`,
+      )
+    } finally {
+      restorePublicUrl(previous)
+    }
   })
 
   it('reads the session cookie and ignores the other cookies', () => {
@@ -132,3 +148,11 @@ describe('session http decisions', () => {
     expect(JSON.stringify(payload)).not.toContain(CREATED_AT)
   })
 })
+
+function restorePublicUrl(previous: string | undefined): void {
+  if (previous === undefined) {
+    delete process.env.PUBLIC_URL
+    return
+  }
+  process.env.PUBLIC_URL = previous
+}
