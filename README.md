@@ -1,5 +1,64 @@
 # Roteiro: Enquete de memórias da infância (V1)
 
+## Como rodar
+
+O app é um processo Next.js com SQLite no mesmo processo. Não há banco externo.
+
+1. Use Node.js 22 ou mais novo. A versão fixada em `.nvmrc` é a 24.22.1. Com o [nvm](https://github.com/nvm-sh/nvm):
+
+   ```bash
+   nvm install
+   nvm use
+   ```
+
+2. Instale as dependências:
+
+   ```bash
+   npm install
+   ```
+
+3. Crie o arquivo de ambiente a partir do exemplo:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+   Preencha os quatro valores. Exemplo para a máquina local:
+
+   ```bash
+   DATABASE_PATH=data/enquete.sqlite
+   PUBLIC_URL=http://localhost:3000
+   PANEL_PASSWORD=escolha-uma-senha
+   COOKIE_SECRET=cole-aqui-o-resultado-do-openssl
+   ```
+
+   - `DATABASE_PATH` é o arquivo SQLite. A pasta é criada na primeira gravação.
+   - `PUBLIC_URL` tem de ser o mesmo endereço que o navegador usa, inclusive a porta. O app compara o cabeçalho `Origin` com essa URL.
+   - `PANEL_PASSWORD` é a senha da tela `/painel`.
+   - `COOKIE_SECRET` precisa ter pelo menos 32 bytes. Gere um valor com `openssl rand -base64 32` e cole no `.env`.
+
+4. Suba o servidor de desenvolvimento:
+
+   ```bash
+   npm run dev
+   ```
+
+5. Abra no navegador o mesmo endereço de `PUBLIC_URL`, inclusive a porta. Com o exemplo acima:
+
+   - Questionário: [http://localhost:3000](http://localhost:3000)
+   - Painel: [http://localhost:3000/painel](http://localhost:3000/painel) (pede `PANEL_PASSWORD`)
+
+   Se `PUBLIC_URL` for o IP da rede, abra o painel nesse IP. `localhost` é outra origem, e a entrada é recusada mesmo com a senha certa.
+
+Para a versão de produção, no mesmo diretório e com o mesmo `.env`:
+
+```bash
+npm run build
+npm start
+```
+
+Use um único processo e um disco que persista o arquivo de `DATABASE_PATH`. SQLite e o canal ao vivo do painel não funcionam com várias instâncias.
+
 ## 1. Objetivo
 Pais respondem perguntas sobre a própria infância pelo celular. Uma segunda tela mostra, em tempo real, o gráfico das respostas de todos.
 
