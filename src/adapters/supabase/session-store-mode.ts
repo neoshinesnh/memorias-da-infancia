@@ -1,0 +1,2 @@
+export const SESSION_STORE_VARIABLE = 'SESSION_STORE'
+export const MEMORY_SESSION_STORE = 'memory'

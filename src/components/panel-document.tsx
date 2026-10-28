@@ -1,5 +1,5 @@
 import { createElement, type ReactElement } from 'react'
-import { readSessionRepository } from '@/adapters/sqlite/session-repository-cache'
+import { readSessionRepository } from '@/adapters/supabase/session-repository-cache'
 import { hasValidPanelCookie } from '@/application/panel-cookie'
 import { createAddressMarkup, readQuestionnaireAddress } from '@/application/panel-code'
 import { readResults } from '@/application/session-use-cases'
@@ -16,7 +16,7 @@ export async function createPanelDocument(cookieHeader: string | null): Promise<
   }
   const address = readQuestionnaireAddress(process.env[PUBLIC_URL_VARIABLE])
   const codeMarkup = await createAddressMarkup(address)
-  const snapshot = readResults(readSessionRepository())
+  const snapshot = await readResults(readSessionRepository())
   return createElement(PanelBoard, { address, codeMarkup, initialSnapshot: snapshot })
 }
 

@@ -8,26 +8,26 @@ export type OpenSessionInput = {
   createdAt: string
 }
 
-export function openSession(repository: SessionRepository, input: OpenSessionInput): Session {
+export async function openSession(repository: SessionRepository, input: OpenSessionInput): Promise<Session> {
   const session = createOpenSession(input.id, input.createdAt)
-  repository.insert(session)
+  await repository.insert(session)
   return session
 }
 
-export function resumeSession(repository: SessionRepository, id: string): Session | null {
+export function resumeSession(repository: SessionRepository, id: string): Promise<Session | null> {
   return repository.findById(id)
 }
 
-export function saveSessionAnswer(
+export async function saveSessionAnswer(
   repository: SessionRepository,
   publisher: ResultsPublisher,
   input: SaveAnswer,
-): Session {
-  const session = repository.saveAnswer(input)
-  publisher.publish(repository.summarize())
+): Promise<Session> {
+  const session = await repository.saveAnswer(input)
+  publisher.publish(await repository.summarize())
   return session
 }
 
-export function readResults(repository: SessionRepository): ResultsSnapshot {
+export function readResults(repository: SessionRepository): Promise<ResultsSnapshot> {
   return repository.summarize()
 }

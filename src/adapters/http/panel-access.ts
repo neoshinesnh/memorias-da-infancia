@@ -1,5 +1,5 @@
 import { readResultsPublisher } from '@/adapters/realtime/in-process-publisher'
-import { readSessionRepository } from '@/adapters/sqlite/session-repository-cache'
+import { readSessionRepository } from '@/adapters/supabase/session-repository-cache'
 import { resetEdition } from '@/application/panel-edition'
 import { assertCookieSecret, buildPanelCookie, hasValidPanelCookie } from '@/application/panel-cookie'
 import {
@@ -63,10 +63,10 @@ export async function enterPanel(request: Request): Promise<Response> {
   }
 }
 
-export function readPanelSnapshot(request: Request): Response {
+export async function readPanelSnapshot(request: Request): Promise<Response> {
   try {
     assertPanelCookie(request.headers.get(COOKIE_HEADER))
-    return createSnapshotResponse(readResults(readSessionRepository()))
+    return createSnapshotResponse(await readResults(readSessionRepository()))
   } catch (error) {
     return createPanelErrorResponse(error)
   }
@@ -80,7 +80,7 @@ export async function resetPanelEdition(request: Request): Promise<Response> {
     if (!confirmed) {
       throw new ResetNotConfirmedError()
     }
-    const snapshot = resetEdition(readSessionRepository(), readResultsPublisher())
+    const snapshot = await resetEdition(readSessionRepository(), readResultsPublisher())
     logEditionReset()
     return createSnapshotResponse(snapshot)
   } catch (error) {

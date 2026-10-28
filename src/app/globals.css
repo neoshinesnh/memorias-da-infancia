@@ -103,6 +103,29 @@ h2 {
   }
 }
 
+.site-header {
+  display: flex;
+  justify-content: center;
+  width: min(960px, 100%);
+  max-width: 100%;
+  margin-inline: auto;
+  padding-top: calc(var(--espaco-4) + env(safe-area-inset-top));
+}
+
+.site-logo {
+  display: block;
+  width: auto;
+  height: var(--espaco-7);
+  max-width: 100%;
+  object-fit: contain;
+}
+
+@media (min-width: 1024px) {
+  .site-logo {
+    height: var(--espaco-8);
+  }
+}
+
 .survey-page {
   display: flex;
   flex-direction: column;
@@ -111,7 +134,7 @@ h2 {
   width: min(560px, 100%);
   max-width: 100%;
   margin-inline: auto;
-  padding-top: calc(var(--espaco-5) + env(safe-area-inset-top));
+  padding-top: var(--espaco-4);
   padding-bottom: calc(var(--espaco-6) + env(safe-area-inset-bottom));
 }
 
@@ -502,7 +525,7 @@ h2 {
   width: min(960px, 100%);
   max-width: 100%;
   margin-inline: auto;
-  padding-top: calc(var(--espaco-5) + env(safe-area-inset-top));
+  padding-top: var(--espaco-4);
   padding-bottom: calc(var(--espaco-6) + env(safe-area-inset-bottom));
 }
 

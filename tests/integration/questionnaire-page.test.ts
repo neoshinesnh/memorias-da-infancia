@@ -1,12 +1,10 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import SqliteDatabase from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { closeParticipantRepositories } from '@/adapters/http/participant-session'
-import { SqliteSessionRepository } from '@/adapters/sqlite/sqlite-session-repository'
+import type { InMemorySessionRepository } from '@/adapters/memory/in-memory-session-repository'
+import { closeSessionRepositories, readMemoryRepository } from '@/adapters/supabase/session-repository-cache'
+import { MEMORY_SESSION_STORE, SESSION_STORE_VARIABLE } from '@/adapters/supabase/session-store-mode'
 import {
   COOKIE_HEADER,
   HTTP_SERVER_ERROR,
@@ -28,12 +26,10 @@ import { OPTION_COUNT, QUESTION_COUNT, type OptionPosition, type QuestionNumber 
 
 const PUBLIC_URL = 'https://evento.test/'
 const PUBLIC_ORIGIN = 'https://evento.test'
-const TEMP_DIRECTORY_PREFIX = 'memorias-questionnaire-'
 const JSON_CONTENT_TYPE = 'application/json'
 const CONTENT_TYPE_HEADER = 'content-type'
 const SET_COOKIE_HEADER = 'set-cookie'
 const EMPTY_COUNT = 0
-const BUSY_TIMEOUT_MILLISECONDS = 5000
 const SECOND_QUESTION: QuestionNumber = 2
 const FOURTH_OPTION: OptionPosition = 4
 
@@ -50,13 +46,8 @@ type TransportGuard = {
   creates: number
 }
 
-type IdRow = {
-  id: string
-}
-
-let directoryPath: string
-let databasePath: string
-let previousDatabasePath: string | undefined
+let sessions: InMemorySessionRepository
+let previousSessionStore: string | undefined
 let previousPublicUrl: string | undefined
 
 function restoreEnv(name: string, previous: string | undefined): void {
@@ -87,11 +78,11 @@ function createRouteTransport(): SessionTransport {
   let cookie: string | undefined
   return {
     readCurrent: async () => {
-      const response = GET(createRequest('/api/sessoes/atual', { method: 'GET', cookie }))
+      const response = await GET(createRequest('/api/sessoes/atual', { method: 'GET', cookie }))
       return readSessionResponse(response)
     },
     createSession: async () => {
-      const response = POST(createRequest('/api/sessoes', { method: 'POST', origin: PUBLIC_ORIGIN }))
+      const response = await POST(createRequest('/api/sessoes', { method: 'POST', origin: PUBLIC_ORIGIN }))
       cookie = readCookieHeader(response) ?? cookie
       return readSessionResponse(response)
     },
@@ -163,61 +154,26 @@ async function answerRemaining(store: QuestionnaireStore, optionNumber: OptionPo
   }
 }
 
-function eraseSessions(): void {
-  closeParticipantRepositories()
-  const repository = new SqliteSessionRepository(databasePath)
-  try {
-    repository.deleteAll()
-  } finally {
-    repository.close()
-  }
-}
-
-function readSessionIds(path: string): string[] {
-  if (!existsSync(path)) {
-    return []
-  }
-  const database = new SqliteDatabase(path)
-  try {
-    database.pragma(`busy_timeout = ${BUSY_TIMEOUT_MILLISECONDS}`)
-    const rows = database.prepare('SELECT id FROM sessions ORDER BY created_at').all()
-    return rows.filter(isIdRow).map((row) => row.id)
-  } finally {
-    database.close()
-  }
-}
-
-function countSessions(path: string): number {
-  return readSessionIds(path).length
-}
-
-function isIdRow(value: unknown): value is IdRow {
-  if (typeof value !== 'object' || value === null) {
-    return false
-  }
-  if (!('id' in value)) {
-    return false
-  }
-  return typeof value.id === 'string'
+function eraseSessions(): Promise<void> {
+  return sessions.deleteAll()
 }
 
 describe('questionnaire page', () => {
   beforeEach(() => {
-    directoryPath = mkdtempSync(join(tmpdir(), TEMP_DIRECTORY_PREFIX))
-    databasePath = join(directoryPath, 'event.sqlite')
-    previousDatabasePath = process.env.DATABASE_PATH
+    previousSessionStore = process.env[SESSION_STORE_VARIABLE]
     previousPublicUrl = process.env.PUBLIC_URL
-    process.env.DATABASE_PATH = databasePath
+    process.env[SESSION_STORE_VARIABLE] = MEMORY_SESSION_STORE
     process.env.PUBLIC_URL = PUBLIC_URL
+    closeSessionRepositories()
+    sessions = readMemoryRepository()
   })
 
   afterEach(() => {
     try {
       closeParticipantRepositories()
     } finally {
-      restoreEnv('DATABASE_PATH', previousDatabasePath)
+      restoreEnv(SESSION_STORE_VARIABLE, previousSessionStore)
       restoreEnv('PUBLIC_URL', previousPublicUrl)
-      rmSync(directoryPath, { recursive: true, force: true })
     }
   })
 
@@ -300,17 +256,17 @@ describe('questionnaire page', () => {
     expect(failed).toContain(SAVE_ERROR_MESSAGE)
     expect(failed).toContain(RETRY_LABEL)
     expect(failed).toContain('type="radio"')
-    expect(countSessions(databasePath)).toBe(1)
+    expect(sessions.countSessions()).toBe(1)
   })
 
   it('opens a clean question when the saved session disappears', async () => {
     const store = createQuestionnaireStore(createRouteTransport())
     await store.start()
     await store.choose(FOURTH_OPTION)
-    const previousIds = readSessionIds(databasePath)
-    eraseSessions()
+    const previousIds = sessions.readSessionIds()
+    await eraseSessions()
     await store.refresh()
-    const nextIds = readSessionIds(databasePath)
+    const nextIds = sessions.readSessionIds()
     const markup = renderScreen(store.readFlow())
     expect(previousIds).toHaveLength(1)
     expect(nextIds).toHaveLength(1)
@@ -333,6 +289,6 @@ describe('questionnaire page', () => {
     expect(guard.creates).toBe(createsAfterStart)
     expect(store.readFlow().payload?.answers).toHaveLength(1)
     expect(store.readFlow().displayedQuestion).toBe(SECOND_QUESTION)
-    expect(countSessions(databasePath)).toBe(1)
+    expect(sessions.countSessions()).toBe(1)
   })
 })

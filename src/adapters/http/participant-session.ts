@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { readResultsPublisher } from '@/adapters/realtime/in-process-publisher'
-import { closeSessionRepositories, readSessionRepository } from '@/adapters/sqlite/session-repository-cache'
+import { closeSessionRepositories, readSessionRepository } from '@/adapters/supabase/session-repository-cache'
 import { SessionNotFoundError } from '@/application/session-repository'
 import { logAnswerSaved, logSessionCreated } from '@/application/session-log'
 import {
@@ -33,10 +33,10 @@ export type QuestionRouteContext = {
   params?: Promise<QuestionRouteParams>
 }
 
-export function createParticipantSession(request: Request): Response {
+export async function createParticipantSession(request: Request): Promise<Response> {
   try {
     assertMutationOrigin(request.headers.get(ORIGIN_HEADER), readPublicUrl())
-    const session = openParticipantSession()
+    const session = await openParticipantSession()
     logSessionCreated()
     return createCreatedResponse(session)
   } catch (error) {
@@ -44,9 +44,9 @@ export function createParticipantSession(request: Request): Response {
   }
 }
 
-export function readCurrentSession(request: Request): Response {
+export async function readCurrentSession(request: Request): Promise<Response> {
   try {
-    return createPayloadResponse(findCurrentSession(request))
+    return createPayloadResponse(await findCurrentSession(request))
   } catch (error) {
     return createFailureResponse(error)
   }
@@ -61,7 +61,7 @@ export async function saveCurrentAnswer(
     const sessionId = readRequestSessionId(request)
     const questionNumber = parseQuestionNumber(await readQuestionSegment(params))
     const optionNumber = await readOptionNumber(request)
-    const session = saveSessionAnswer(readSessionRepository(), readResultsPublisher(), {
+    const session = await saveSessionAnswer(readSessionRepository(), readResultsPublisher(), {
       sessionId,
       questionNumber,
       optionNumber,
@@ -77,16 +77,16 @@ export function closeParticipantRepositories(): void {
   closeSessionRepositories()
 }
 
-function openParticipantSession(): Session {
+function openParticipantSession(): Promise<Session> {
   return openSession(readSessionRepository(), {
     id: randomUUID(),
     createdAt: new Date().toISOString(),
   })
 }
 
-function findCurrentSession(request: Request): Session {
+async function findCurrentSession(request: Request): Promise<Session> {
   const sessionId = readRequestSessionId(request)
-  const session = resumeSession(readSessionRepository(), sessionId)
+  const session = await resumeSession(readSessionRepository(), sessionId)
   return requireSession(session)
 }
 

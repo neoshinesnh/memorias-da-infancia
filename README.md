@@ -2,7 +2,7 @@
 
 ## Como rodar
 
-O app é um processo Next.js com SQLite no mesmo processo. Não há banco externo.
+O app é um processo Next.js. Sessões e respostas ficam no Supabase.
 
 1. Use Node.js 22 ou mais novo. A versão fixada em `.nvmrc` é a 24.22.1. Com o [nvm](https://github.com/nvm-sh/nvm):
 
@@ -23,27 +23,39 @@ O app é um processo Next.js com SQLite no mesmo processo. Não há banco extern
    cp .env.example .env
    ```
 
-   Preencha os quatro valores. Exemplo para a máquina local:
+   Preencha os valores. Exemplo para a máquina local:
 
    ```bash
-   DATABASE_PATH=data/enquete.sqlite
+   SUPABASE_URL=https://seu-projeto.supabase.co
+   SUPABASE_SECRET_KEY=cole-a-chave-service-role
+   DATABASE_URL=postgresql://postgres:senha@db.seu-projeto.supabase.co:5432/postgres
    PUBLIC_URL=http://localhost:3050
    PANEL_PASSWORD=escolha-uma-senha
    COOKIE_SECRET=cole-aqui-o-resultado-do-openssl
    ```
 
-   - `DATABASE_PATH` é o arquivo SQLite. A pasta é criada na primeira gravação.
+   - `SUPABASE_URL` é a URL do projeto no Supabase.
+   - `SUPABASE_SECRET_KEY` é a chave secreta do servidor (`service_role` ou secret key). Ela não vai para o navegador.
+   - `DATABASE_URL` é a connection string do Postgres na porta 5432 (conexão direta ou session pooler), em Project Settings → Database. A porta 6543 é o transaction pooler e não serve para este comando. Se a senha tiver `@`, `#` ou `:`, troque esses caracteres pelo código URL (`@` vira `%40`).
    - `PUBLIC_URL` tem de ser o mesmo endereço que o navegador usa, inclusive a porta. O app compara o cabeçalho `Origin` com essa URL.
    - `PANEL_PASSWORD` é a senha da tela `/painel`.
    - `COOKIE_SECRET` precisa ter pelo menos 32 bytes. Gere um valor com `openssl rand -base64 32` e cole no `.env`.
 
-4. Suba o servidor de desenvolvimento:
+4. Crie as tabelas no Supabase:
+
+   ```bash
+   npm run migrate
+   ```
+
+   O comando aplica os arquivos de `supabase/migrations` em ordem e registra o que já rodou. Na segunda execução, não reaplica o que já foi gravado.
+
+5. Suba o servidor de desenvolvimento:
 
    ```bash
    npm run dev
    ```
 
-5. Abra no navegador o mesmo endereço de `PUBLIC_URL`, inclusive a porta. Com o exemplo acima:
+6. Abra no navegador o mesmo endereço de `PUBLIC_URL`, inclusive a porta. Com o exemplo acima:
 
    - Questionário: [http://localhost:3050](http://localhost:3050)
    - Painel: [http://localhost:3050/painel](http://localhost:3050/painel) (pede `PANEL_PASSWORD`)
@@ -57,7 +69,7 @@ npm run build
 npm start
 ```
 
-Use um único processo e um disco que persista o arquivo de `DATABASE_PATH`. SQLite e o canal ao vivo do painel não funcionam com várias instâncias.
+O canal ao vivo do painel continua no processo Node. A consulta de reserva lê o Supabase, então o telão acompanha os votos mesmo se o fluxo instantâneo cair.
 
 ## 1. Objetivo
 Pais respondem perguntas sobre a própria infância pelo celular. Uma segunda tela mostra, em tempo real, o gráfico das respostas de todos.

@@ -41,9 +41,13 @@ function createCountsFor(optionNumber: OptionPosition, total: number): number[] 
   return counts
 }
 
-function answerEveryQuestion(repository: SessionRepository, sessionId: string, optionNumber: OptionPosition): void {
+async function answerEveryQuestion(
+  repository: SessionRepository,
+  sessionId: string,
+  optionNumber: OptionPosition,
+): Promise<void> {
   for (const question of surveyCatalog) {
-    saveSessionAnswer(repository, idleResultsPublisher, {
+    await saveSessionAnswer(repository, idleResultsPublisher, {
       sessionId,
       questionNumber: question.number,
       optionNumber,
@@ -52,11 +56,11 @@ function answerEveryQuestion(repository: SessionRepository, sessionId: string, o
 }
 
 describe('session use cases', () => {
-  it('opens a session that stays out of participating until the first answer', () => {
+  it('opens a session that stays out of participating until the first answer', async () => {
     const repository = new InMemorySessionRepository()
-    const opened = openSession(repository, { id: 'session-1', createdAt: CREATED_AT })
-    const resumed = resumeSession(repository, opened.id)
-    const results = readResults(repository)
+    const opened = await openSession(repository, { id: 'session-1', createdAt: CREATED_AT })
+    const resumed = await resumeSession(repository, opened.id)
+    const results = await readResults(repository)
     expect(opened.currentQuestion).toBe(FIRST_QUESTION_NUMBER)
     expect(opened.status).toBe(OPEN_SESSION_STATUS)
     expect(resumed).toEqual(opened)
@@ -64,21 +68,21 @@ describe('session use cases', () => {
     expect(results.finished).toBe(EMPTY_COUNT)
   })
 
-  it('replaces an option, keeps the session participating, and resumes the stored screen', () => {
+  it('replaces an option, keeps the session participating, and resumes the stored screen', async () => {
     const repository = new InMemorySessionRepository()
-    const opened = openSession(repository, { id: 'session-1', createdAt: CREATED_AT })
-    saveSessionAnswer(repository, idleResultsPublisher, {
+    const opened = await openSession(repository, { id: 'session-1', createdAt: CREATED_AT })
+    await saveSessionAnswer(repository, idleResultsPublisher, {
       sessionId: opened.id,
       questionNumber: FIRST_QUESTION_NUMBER,
       optionNumber: FIRST_OPTION,
     })
-    const replaced = saveSessionAnswer(repository, idleResultsPublisher, {
+    const replaced = await saveSessionAnswer(repository, idleResultsPublisher, {
       sessionId: opened.id,
       questionNumber: FIRST_QUESTION_NUMBER,
       optionNumber: FOURTH_OPTION,
     })
-    const resumed = resumeSession(repository, opened.id)
-    const results = readResults(repository)
+    const resumed = await resumeSession(repository, opened.id)
+    const results = await readResults(repository)
     expect(replaced.currentQuestion).toBe(SECOND_QUESTION)
     expect(replaced.answers).toEqual([
       { questionNumber: FIRST_QUESTION_NUMBER, optionNumber: FOURTH_OPTION },
@@ -91,25 +95,25 @@ describe('session use cases', () => {
     )
   })
 
-  it('returns to the following question when an earlier answer is saved again', () => {
+  it('returns to the following question when an earlier answer is saved again', async () => {
     const repository = new InMemorySessionRepository()
-    const opened = openSession(repository, { id: 'session-1', createdAt: CREATED_AT })
+    const opened = await openSession(repository, { id: 'session-1', createdAt: CREATED_AT })
     for (const question of surveyCatalog) {
       if (question.number > THIRD_QUESTION) {
         break
       }
-      saveSessionAnswer(repository, idleResultsPublisher, {
+      await saveSessionAnswer(repository, idleResultsPublisher, {
         sessionId: opened.id,
         questionNumber: question.number,
         optionNumber: FIRST_OPTION,
       })
     }
-    const saved = saveSessionAnswer(repository, idleResultsPublisher, {
+    const saved = await saveSessionAnswer(repository, idleResultsPublisher, {
       sessionId: opened.id,
       questionNumber: THIRD_QUESTION,
       optionNumber: FOURTH_OPTION,
     })
-    const results = readResults(repository)
+    const results = await readResults(repository)
     expect(saved.currentQuestion).toBe(FOURTH_QUESTION)
     expect(saved.furthestQuestion).toBe(FOURTH_QUESTION)
     expect(saved.status).toBe(OPEN_SESSION_STATUS)
@@ -119,12 +123,12 @@ describe('session use cases', () => {
     )
   })
 
-  it('completes on the last question and refuses a later save without changing counts', () => {
+  it('completes on the last question and refuses a later save without changing counts', async () => {
     const repository = new InMemorySessionRepository()
-    const opened = openSession(repository, { id: 'session-1', createdAt: CREATED_AT })
-    answerEveryQuestion(repository, opened.id, FIRST_OPTION)
-    const completed = resumeSession(repository, opened.id)
-    const before = readResults(repository)
+    const opened = await openSession(repository, { id: 'session-1', createdAt: CREATED_AT })
+    await answerEveryQuestion(repository, opened.id, FIRST_OPTION)
+    const completed = await resumeSession(repository, opened.id)
+    const before = await readResults(repository)
     expect(completed?.status).toBe(COMPLETED_SESSION_STATUS)
     expect(completed?.currentQuestion).toBe(QUESTION_COUNT)
     expect(before.participating).toBe(EMPTY_COUNT)
@@ -132,15 +136,15 @@ describe('session use cases', () => {
     expect(before.questions.find((question) => question.questionNumber === QUESTION_COUNT)?.counts).toEqual(
       createCountsFor(FIRST_OPTION, ONE_VOTE),
     )
-    expect(() =>
+    await expect(
       saveSessionAnswer(repository, idleResultsPublisher, {
         sessionId: opened.id,
         questionNumber: QUESTION_COUNT,
         optionNumber: FOURTH_OPTION,
       }),
-    ).toThrow(CompletedSessionError)
-    expect(readResults(repository)).toEqual(before)
-    const lastAnswer = resumeSession(repository, opened.id)?.answers.find(
+    ).rejects.toThrow(CompletedSessionError)
+    expect(await readResults(repository)).toEqual(before)
+    const lastAnswer = (await resumeSession(repository, opened.id))?.answers.find(
       (answer) => answer.questionNumber === QUESTION_COUNT,
     )
     expect(lastAnswer).toEqual({
@@ -149,17 +153,17 @@ describe('session use cases', () => {
     })
   })
 
-  it('resets participating, finished, and every option count', () => {
+  it('resets participating, finished, and every option count', async () => {
     const repository = new InMemorySessionRepository()
-    const opened = openSession(repository, { id: 'session-1', createdAt: CREATED_AT })
-    saveSessionAnswer(repository, idleResultsPublisher, {
+    const opened = await openSession(repository, { id: 'session-1', createdAt: CREATED_AT })
+    await saveSessionAnswer(repository, idleResultsPublisher, {
       sessionId: opened.id,
       questionNumber: FIRST_QUESTION_NUMBER,
       optionNumber: FIRST_OPTION,
     })
-    repository.deleteAll()
-    const results = readResults(repository)
-    expect(resumeSession(repository, opened.id)).toBeNull()
+    await repository.deleteAll()
+    const results = await readResults(repository)
+    expect(await resumeSession(repository, opened.id)).toBeNull()
     expect(results.participating).toBe(EMPTY_COUNT)
     expect(results.finished).toBe(EMPTY_COUNT)
     expect(results.questions).toHaveLength(QUESTION_COUNT)
@@ -168,17 +172,17 @@ describe('session use cases', () => {
     }
   })
 
-  it('refuses a missing session and a duplicated open', () => {
+  it('refuses a missing session and a duplicated open', async () => {
     const repository = new InMemorySessionRepository()
-    const opened = openSession(repository, { id: 'session-1', createdAt: CREATED_AT })
-    expect(() =>
+    const opened = await openSession(repository, { id: 'session-1', createdAt: CREATED_AT })
+    await expect(
       saveSessionAnswer(repository, idleResultsPublisher, {
         sessionId: 'missing',
         questionNumber: FIRST_QUESTION_NUMBER,
         optionNumber: FIRST_OPTION,
       }),
-    ).toThrow(SessionNotFoundError)
-    expect(() => openSession(repository, { id: opened.id, createdAt: CREATED_AT })).toThrow(DuplicateSessionError)
-    expect(readResults(repository).participating).toBe(EMPTY_COUNT)
+    ).rejects.toThrow(SessionNotFoundError)
+    await expect(openSession(repository, { id: opened.id, createdAt: CREATED_AT })).rejects.toThrow(DuplicateSessionError)
+    expect((await readResults(repository)).participating).toBe(EMPTY_COUNT)
   })
 })

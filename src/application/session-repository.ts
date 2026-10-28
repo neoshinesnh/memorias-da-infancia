@@ -9,11 +9,11 @@ export type SaveAnswer = {
 }
 
 export type SessionRepository = {
-  findById(id: string): Session | null
-  insert(session: Session): void
-  saveAnswer(input: SaveAnswer): Session
-  summarize(): ResultsSnapshot
-  deleteAll(): void
+  findById(id: string): Promise<Session | null>
+  insert(session: Session): Promise<void>
+  saveAnswer(input: SaveAnswer): Promise<Session>
+  summarize(): Promise<ResultsSnapshot>
+  deleteAll(): Promise<void>
 }
 
 export class SessionNotFoundError extends Error {

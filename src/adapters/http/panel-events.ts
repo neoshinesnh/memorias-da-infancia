@@ -1,6 +1,6 @@
 import { assertPanelRequest, createPanelErrorResponse } from '@/adapters/http/panel-access'
 import { readResultsPublisher } from '@/adapters/realtime/in-process-publisher'
-import { readSessionRepository } from '@/adapters/sqlite/session-repository-cache'
+import { readSessionRepository } from '@/adapters/supabase/session-repository-cache'
 import { logStreamClientConnected, logStreamClientDisconnected } from '@/application/panel-log'
 import {
   PANEL_HEARTBEAT_MILLISECONDS,
@@ -61,8 +61,8 @@ function createEventHeaders(): Headers {
 function createEventStream(signal: AbortSignal): ReadableStream<Uint8Array> {
   const writer = createStreamWriter()
   return new ReadableStream({
-    start(controller) {
-      startEventStream(controller, writer, signal)
+    async start(controller) {
+      await startEventStream(controller, writer, signal)
     },
     cancel() {
       closeEventStream(writer)
@@ -78,29 +78,30 @@ function createStreamWriter(): StreamWriter {
   }
 }
 
-function startEventStream(
+async function startEventStream(
   controller: ByteController,
   writer: StreamWriter,
   signal: AbortSignal,
-): void {
+): Promise<void> {
   const send = createChunkSender(controller, writer)
   writer.unsubscribe = readResultsPublisher().subscribe((snapshot) => {
     send(formatResultsEvent(snapshot))
   })
-  if (!sendCurrentSnapshot(send, writer, controller)) {
+  const ready = await sendCurrentSnapshot(send, writer, controller)
+  if (!ready) {
     return
   }
   writer.heartbeat = startHeartbeat(send)
   watchAbort(signal, controller, writer)
 }
 
-function sendCurrentSnapshot(
+async function sendCurrentSnapshot(
   send: (chunk: string) => void,
   writer: StreamWriter,
   controller: ByteController,
-): boolean {
+): Promise<boolean> {
   try {
-    send(formatResultsEvent(readCurrentSnapshot()))
+    send(formatResultsEvent(await readCurrentSnapshot()))
   } catch (error) {
     closeEventStream(writer)
     errorController(controller, error)
@@ -109,7 +110,7 @@ function sendCurrentSnapshot(
   return !writer.closed
 }
 
-function readCurrentSnapshot(): ResultsSnapshot {
+function readCurrentSnapshot(): Promise<ResultsSnapshot> {
   return readResults(readSessionRepository())
 }
 

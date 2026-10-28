@@ -1,10 +1,8 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import SqliteDatabase from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { readResultsPublisher } from '@/adapters/realtime/in-process-publisher'
-import { closeSessionRepositories } from '@/adapters/sqlite/session-repository-cache'
+import type { InMemorySessionRepository } from '@/adapters/memory/in-memory-session-repository'
+import { closeSessionRepositories, readMemoryRepository } from '@/adapters/supabase/session-repository-cache'
+import { MEMORY_SESSION_STORE, SESSION_STORE_VARIABLE } from '@/adapters/supabase/session-store-mode'
 import { GET as readPanelEvents } from '@/app/api/painel/eventos/route'
 import { POST as enterPanel } from '@/app/api/painel/entrar/route'
 import { GET as readPanelResults } from '@/app/api/painel/resultados/route'
@@ -34,7 +32,6 @@ const PANEL_PASSWORD = 'SenhaCorretaDoPainelEvento'
 const COOKIE_SECRET = '0123456789abcdef0123456789abcdef'
 const USER_AGENT = 'AgenteUnicoMemorias'
 const FORWARDED_ADDRESS = '203.0.113.44'
-const TEMP_DIRECTORY_PREFIX = 'memorias-live-results-'
 const JSON_CONTENT_TYPE = 'application/json'
 const CONTENT_TYPE_HEADER = 'content-type'
 const USER_AGENT_HEADER = 'user-agent'
@@ -52,15 +49,12 @@ const MISSING_SEPARATOR = -1
 const FRAME_WAIT_MILLISECONDS = 1000
 const HEARTBEAT_INTERVAL_SECONDS = 15
 const MILLISECONDS_PER_SECOND = 1000
-const BUSY_TIMEOUT_MILLISECONDS = 5000
 const EMPTY_COUNT = 0
 const ONE_ROW = 1
 const ONE_VOTE = 1
 const INFO_LOG_LEVEL = 'info'
 const CONNECTED_STREAM_EVENT = 'sse_client_connected'
 const DISCONNECTED_STREAM_EVENT = 'sse_client_disconnected'
-const COUNT_ANSWERS_SQL = 'SELECT COUNT(*) AS total FROM answers'
-const COUNT_SESSIONS_SQL = 'SELECT COUNT(*) AS total FROM sessions'
 const FIRST_OPTION: OptionPosition = 1
 
 type RequestOptions = {
@@ -72,10 +66,6 @@ type RequestOptions = {
   forwardedFor?: string
 }
 
-type TotalRow = {
-  total: number
-}
-
 type FrameBuffer = {
   text: string
 }
@@ -85,9 +75,8 @@ type FrameReader = {
   close: () => Promise<void>
 }
 
-let directoryPath: string
-let databasePath: string
-let previousDatabasePath: string | undefined
+let sessions: InMemorySessionRepository
+let previousSessionStore: string | undefined
 let previousPublicUrl: string | undefined
 let previousPanelPassword: string | undefined
 let previousCookieSecret: string | undefined
@@ -123,11 +112,11 @@ function createRequest(path: string, options: RequestOptions): Request {
   })
 }
 
-function postSession(): Response {
+function postSession(): Promise<Response> {
   return createParticipant(createRequest('/api/sessoes', { method: 'POST', origin: PUBLIC_ORIGIN }))
 }
 
-function getSession(sessionId: string): Response {
+function getSession(sessionId: string): Promise<Response> {
   return readCurrentSession(
     createRequest('/api/sessoes/atual', {
       method: 'GET',
@@ -160,7 +149,7 @@ function postLogin(password: string): Promise<Response> {
   )
 }
 
-function getResults(cookie: string): Response {
+function getResults(cookie: string): Promise<Response> {
   return readPanelResults(
     createRequest('/api/painel/resultados', {
       method: 'GET',
@@ -209,36 +198,6 @@ function readCookiePair(response: Response): string {
     throw new Error('Panel cookie was not set')
   }
   return pair
-}
-
-function countRows(path: string, countQuery: string): number {
-  if (!existsSync(path)) {
-    return EMPTY_COUNT
-  }
-  const database = new SqliteDatabase(path, { readonly: true })
-  try {
-    database.pragma(`busy_timeout = ${BUSY_TIMEOUT_MILLISECONDS}`)
-    const row = database.prepare(countQuery).get()
-    if (!isTotalRow(row)) {
-      return EMPTY_COUNT
-    }
-    return row.total
-  } finally {
-    database.close()
-  }
-}
-
-function isTotalRow(row: unknown): row is TotalRow {
-  if (typeof row !== 'object') {
-    return false
-  }
-  if (row === null) {
-    return false
-  }
-  if (!('total' in row)) {
-    return false
-  }
-  return typeof row.total === 'number'
 }
 
 function createZeroCounts(): number[] {
@@ -439,16 +398,16 @@ async function withHeartbeatSpy(action: (pulse: () => void) => Promise<void>): P
 describe('live results', () => {
   beforeEach(() => {
     clearPasswordFailures()
-    directoryPath = mkdtempSync(join(tmpdir(), TEMP_DIRECTORY_PREFIX))
-    databasePath = join(directoryPath, 'event.sqlite')
-    previousDatabasePath = process.env.DATABASE_PATH
+    previousSessionStore = process.env[SESSION_STORE_VARIABLE]
     previousPublicUrl = process.env.PUBLIC_URL
     previousPanelPassword = process.env.PANEL_PASSWORD
     previousCookieSecret = process.env.COOKIE_SECRET
-    process.env.DATABASE_PATH = databasePath
+    process.env[SESSION_STORE_VARIABLE] = MEMORY_SESSION_STORE
     process.env.PUBLIC_URL = PUBLIC_URL
     process.env.PANEL_PASSWORD = PANEL_PASSWORD
     process.env.COOKIE_SECRET = COOKIE_SECRET
+    closeSessionRepositories()
+    sessions = readMemoryRepository()
   })
 
   afterEach(async () => {
@@ -457,22 +416,21 @@ describe('live results', () => {
       closeSessionRepositories()
     } finally {
       clearPasswordFailures()
-      restoreEnv('DATABASE_PATH', previousDatabasePath)
+      restoreEnv(SESSION_STORE_VARIABLE, previousSessionStore)
       restoreEnv('PUBLIC_URL', previousPublicUrl)
       restoreEnv('PANEL_PASSWORD', previousPanelPassword)
       restoreEnv('COOKIE_SECRET', previousCookieSecret)
-      rmSync(directoryPath, { recursive: true, force: true })
     }
   })
 
   it('delivers the committed portrait when an answer is saved and when the edition is reset', async () => {
-    const created = postSession()
+    const created = await postSession()
     const sessionId = readCreatedSessionId(created)
     const login = await postLogin(PANEL_PASSWORD)
     const panelCookie = readCookiePair(login)
     const rowsAtPublish: number[] = []
     const unsubscribe = readResultsPublisher().subscribe(() => {
-      rowsAtPublish.push(countRows(databasePath, COUNT_ANSWERS_SQL))
+      rowsAtPublish.push(sessions.countAnswers())
     })
     const output = await captureStdout(async () => {
       const response = getEvents(panelCookie)
@@ -486,13 +444,13 @@ describe('live results', () => {
         const saved = await putAnswer(sessionId)
         expect(saved.status).toBe(HTTP_OK)
         expect(readSnapshotFrame(await events.readFrame())).toEqual(createVotedSnapshot())
-        expect(countRows(databasePath, COUNT_ANSWERS_SQL)).toBe(ONE_ROW)
+        expect(sessions.countAnswers()).toBe(ONE_ROW)
         const reset = await postReset(panelCookie)
         expect(reset.status).toBe(HTTP_OK)
         expect(readSnapshotFrame(await events.readFrame())).toEqual(createZeroSnapshot())
-        expect(countRows(databasePath, COUNT_ANSWERS_SQL)).toBe(EMPTY_COUNT)
-        expect(countRows(databasePath, COUNT_SESSIONS_SQL)).toBe(EMPTY_COUNT)
-        expect(getSession(sessionId).status).toBe(HTTP_NOT_FOUND)
+        expect(sessions.countAnswers()).toBe(EMPTY_COUNT)
+        expect(sessions.countSessions()).toBe(EMPTY_COUNT)
+        expect((await getSession(sessionId)).status).toBe(HTTP_NOT_FOUND)
       } finally {
         unsubscribe()
         await events.close()
@@ -510,7 +468,7 @@ describe('live results', () => {
   })
 
   it('refuses the event stream without the panel cookie', async () => {
-    const created = postSession()
+    const created = await postSession()
     const sessionId = readCreatedSessionId(created)
     const output = await captureStdout(async () => {
       const missing = getEvents()
@@ -550,7 +508,7 @@ describe('live results', () => {
   })
 
   it('keeps the saved answer when a subscriber throws', async () => {
-    const created = postSession()
+    const created = await postSession()
     const sessionId = readCreatedSessionId(created)
     const login = await postLogin(PANEL_PASSWORD)
     const panelCookie = readCookiePair(login)
@@ -560,7 +518,7 @@ describe('live results', () => {
     try {
       const saved = await putAnswer(sessionId)
       expect(saved.status).toBe(HTTP_OK)
-      const results = getResults(panelCookie)
+      const results = await getResults(panelCookie)
       expect(results.status).toBe(HTTP_OK)
       const body: unknown = await results.json()
       expect(body).toEqual(createVotedSnapshot())

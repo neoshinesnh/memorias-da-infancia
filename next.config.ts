@@ -7,7 +7,6 @@ const LOOPBACK_V6_HOST = '::1'
 
 const nextConfiguration: NextConfig = {
   output: 'standalone',
-  serverExternalPackages: ['better-sqlite3'],
   allowedDevOrigins: readDevOrigins(process.env[PUBLIC_URL]),
 }
 

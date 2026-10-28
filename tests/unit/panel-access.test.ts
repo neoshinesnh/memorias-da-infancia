@@ -59,6 +59,7 @@ const SECONDS_PER_MINUTE = 60
 const WINDOW_MINUTES = 15
 const MILLISECONDS_PER_SECOND = 1000
 const EMPTY_COUNT = 0
+const FIRST_PUBLISH = 0
 const CREATED_AT = '2026-10-27T12:00:00.000Z'
 const SESSION_ID = 'panel-session'
 
@@ -195,26 +196,28 @@ describe('panel reset confirmation', () => {
     expect(JSON.stringify(resolvePanelFailure(new Error('hidden password')))).not.toContain('password')
   })
 
-  it('returns a zero snapshot after the stored edition is deleted', () => {
+  it('returns a zero snapshot after the stored edition is deleted', async () => {
     const repository = new InMemorySessionRepository()
-    const opened = openSession(repository, { id: SESSION_ID, createdAt: CREATED_AT })
-    saveSessionAnswer(repository, idleResultsPublisher, {
+    const opened = await openSession(repository, { id: SESSION_ID, createdAt: CREATED_AT })
+    await saveSessionAnswer(repository, idleResultsPublisher, {
       sessionId: opened.id,
       questionNumber: FIRST_QUESTION_NUMBER,
       optionNumber: FIRST_OPTION_POSITION,
     })
     const published: ResultsSnapshot[] = []
+    const foundAtPublish: Array<Promise<unknown>> = []
     const publisher: ResultsPublisher = {
       publish(snapshot) {
-        expect(repository.findById(opened.id)).toBeNull()
+        foundAtPublish.push(repository.findById(opened.id))
         published.push(snapshot)
       },
       subscribe() {
         return () => undefined
       },
     }
-    const snapshot = resetEdition(repository, publisher)
+    const snapshot = await resetEdition(repository, publisher)
     expect(published).toEqual([snapshot])
+    expect(await foundAtPublish[FIRST_PUBLISH]).toBeNull()
     expect(snapshot.participating).toBe(EMPTY_COUNT)
     expect(snapshot.finished).toBe(EMPTY_COUNT)
     expect(snapshot.questions).toHaveLength(surveyCatalog.length)
@@ -222,8 +225,8 @@ describe('panel reset confirmation', () => {
       expect(question.counts).toHaveLength(OPTION_COUNT)
       expect(question.counts.every((count) => count === EMPTY_COUNT)).toBe(true)
     }
-    expect(repository.findById(opened.id)).toBeNull()
-    expect(repository.summarize().participating).toBe(EMPTY_COUNT)
+    expect(await repository.findById(opened.id)).toBeNull()
+    expect((await repository.summarize()).participating).toBe(EMPTY_COUNT)
   })
 })
 

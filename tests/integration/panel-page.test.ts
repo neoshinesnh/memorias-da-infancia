@@ -1,11 +1,9 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import SqliteDatabase from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { closeSessionRepositories } from '@/adapters/sqlite/session-repository-cache'
+import type { InMemorySessionRepository } from '@/adapters/memory/in-memory-session-repository'
+import { closeSessionRepositories, readMemoryRepository } from '@/adapters/supabase/session-repository-cache'
+import { MEMORY_SESSION_STORE, SESSION_STORE_VARIABLE } from '@/adapters/supabase/session-store-mode'
 import { POST as enterPanel } from '@/app/api/painel/entrar/route'
 import { GET as readPanelResults } from '@/app/api/painel/resultados/route'
 import { POST as resetPanel } from '@/app/api/painel/zerar/route'
@@ -39,17 +37,13 @@ const PUBLIC_ORIGIN = 'https://evento.test'
 const PANEL_PASSWORD = 'SenhaCorretaDoPainelEvento'
 const WRONG_PASSWORD = 'SenhaDigitadaQueNaoPodeVazar'
 const COOKIE_SECRET = '0123456789abcdef0123456789abcdef'
-const TEMP_DIRECTORY_PREFIX = 'memorias-panel-page-'
 const JSON_CONTENT_TYPE = 'application/json'
 const CONTENT_TYPE_HEADER = 'content-type'
 const SET_COOKIE_HEADER = 'set-cookie'
-const BUSY_TIMEOUT_MILLISECONDS = 5000
 const EMPTY_COUNT = 0
 const SECOND_QUESTION: QuestionNumber = 2
 const THIRD_QUESTION: QuestionNumber = 3
 const START = 0
-const COUNT_SESSIONS_SQL = 'SELECT COUNT(*) AS total FROM sessions'
-
 const idleActions: PanelActions = {
   chooseQuestion: () => undefined,
   pause: () => undefined,
@@ -66,17 +60,12 @@ type RequestOptions = {
   body?: string
 }
 
-type TotalRow = {
-  total: number
-}
-
 type ResetLog = {
   calls: number
 }
 
-let directoryPath: string
-let databasePath: string
-let previousDatabasePath: string | undefined
+let sessions: InMemorySessionRepository
+let previousSessionStore: string | undefined
 let previousPublicUrl: string | undefined
 let previousPanelPassword: string | undefined
 let previousCookieSecret: string | undefined
@@ -105,7 +94,7 @@ function createRequest(path: string, options: RequestOptions): Request {
   })
 }
 
-function postSession(): Response {
+function postSession(): Promise<Response> {
   return createParticipant(createRequest('/api/sessoes', { method: 'POST', origin: PUBLIC_ORIGIN }))
 }
 
@@ -131,7 +120,7 @@ function postLogin(password: string): Promise<Response> {
   )
 }
 
-function getResults(cookie: string): Response {
+function getResults(cookie: string): Promise<Response> {
   return readPanelResults(createRequest('/api/painel/resultados', { method: 'GET', cookie }))
 }
 
@@ -176,7 +165,7 @@ async function readSnapshot(response: Response): Promise<ResultsSnapshot> {
 }
 
 async function seedAnswer(): Promise<string> {
-  const created = postSession()
+  const created = await postSession()
   const sessionId = readCreatedSessionId(created)
   const saved = await putFirstAnswer(sessionId)
   expect(saved.status).toBe(HTTP_OK)
@@ -210,56 +199,33 @@ function countOccurrences(source: string, token: string): number {
 }
 
 function countSessions(): number {
-  if (!existsSync(databasePath)) {
-    return EMPTY_COUNT
-  }
-  const database = new SqliteDatabase(databasePath)
-  try {
-    database.pragma(`busy_timeout = ${BUSY_TIMEOUT_MILLISECONDS}`)
-    const row = database.prepare(COUNT_SESSIONS_SQL).get()
-    if (!isTotalRow(row)) {
-      return EMPTY_COUNT
-    }
-    return row.total
-  } finally {
-    database.close()
-  }
-}
-
-function isTotalRow(row: unknown): row is TotalRow {
-  if (typeof row !== 'object' || row === null) {
-    return false
-  }
-  if (!('total' in row)) {
-    return false
-  }
-  return typeof row.total === 'number'
+  return sessions.countSessions()
 }
 
 describe('panel page', () => {
   beforeEach(() => {
     clearPasswordFailures()
-    directoryPath = mkdtempSync(join(tmpdir(), TEMP_DIRECTORY_PREFIX))
-    databasePath = join(directoryPath, 'event.sqlite')
-    previousDatabasePath = process.env.DATABASE_PATH
+    previousSessionStore = process.env[SESSION_STORE_VARIABLE]
     previousPublicUrl = process.env.PUBLIC_URL
     previousPanelPassword = process.env.PANEL_PASSWORD
     previousCookieSecret = process.env.COOKIE_SECRET
-    process.env.DATABASE_PATH = databasePath
+    process.env[SESSION_STORE_VARIABLE] = MEMORY_SESSION_STORE
     process.env.PUBLIC_URL = PUBLIC_URL
     process.env.PANEL_PASSWORD = PANEL_PASSWORD
     process.env.COOKIE_SECRET = COOKIE_SECRET
+    closeSessionRepositories()
+    sessions = readMemoryRepository()
   })
 
   afterEach(() => {
     try {
       closeSessionRepositories()
     } finally {
-      restoreEnv('DATABASE_PATH', previousDatabasePath)
+      clearPasswordFailures()
+      restoreEnv(SESSION_STORE_VARIABLE, previousSessionStore)
       restoreEnv('PUBLIC_URL', previousPublicUrl)
       restoreEnv('PANEL_PASSWORD', previousPanelPassword)
       restoreEnv('COOKIE_SECRET', previousCookieSecret)
-      rmSync(directoryPath, { recursive: true, force: true })
     }
   })
 
@@ -284,7 +250,7 @@ describe('panel page', () => {
 
   it('shows one question, the public address and the stored portrait', async () => {
     const cookie = await seedPanel()
-    const snapshot = await readSnapshot(getResults(cookie))
+    const snapshot = await readSnapshot(await getResults(cookie))
     const markup = await renderDocument(cookie)
     expect(snapshot.participating).toBe(1)
     expect(snapshot.finished).toBe(EMPTY_COUNT)
@@ -308,7 +274,7 @@ describe('panel page', () => {
 
   it('shows the chosen question and pauses until rotation resumes', async () => {
     const cookie = await seedPanel()
-    const snapshot = await readSnapshot(getResults(cookie))
+    const snapshot = await readSnapshot(await getResults(cookie))
     const store = createPanelBoardStore({ resetEdition: async () => null }, { now: START, snapshot })
     store.chooseQuestion(SECOND_QUESTION)
     const chosen = renderState(store.readState())
@@ -331,7 +297,7 @@ describe('panel page', () => {
 
   it('cancels a reset without deleting and confirms one without reloading', async () => {
     const cookie = await seedPanel()
-    const snapshot = await readSnapshot(getResults(cookie))
+    const snapshot = await readSnapshot(await getResults(cookie))
     const log: ResetLog = { calls: 0 }
     const store = createPanelBoardStore({
       resetEdition: async () => {

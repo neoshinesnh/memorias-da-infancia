@@ -1,9 +1,7 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import SqliteDatabase from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { closeSessionRepositories } from '@/adapters/sqlite/session-repository-cache'
+import type { InMemorySessionRepository } from '@/adapters/memory/in-memory-session-repository'
+import { closeSessionRepositories, readMemoryRepository } from '@/adapters/supabase/session-repository-cache'
+import { MEMORY_SESSION_STORE, SESSION_STORE_VARIABLE } from '@/adapters/supabase/session-store-mode'
 import { POST as enterPanel } from '@/app/api/painel/entrar/route'
 import { GET as readPanelResults } from '@/app/api/painel/resultados/route'
 import { POST as resetPanel } from '@/app/api/painel/zerar/route'
@@ -50,7 +48,6 @@ const PERSON_NAME = 'PessoaUnicaMemorias'
 const CONTACT_EMAIL = 'pessoa-unica@memorias.test'
 const USER_AGENT = 'AgenteUnicoMemorias'
 const FORWARDED_ADDRESS = '203.0.113.44'
-const TEMP_DIRECTORY_PREFIX = 'memorias-panel-routes-'
 const JSON_CONTENT_TYPE = 'application/json'
 const CONTENT_TYPE_HEADER = 'content-type'
 const USER_AGENT_HEADER = 'user-agent'
@@ -58,7 +55,6 @@ const FORWARDED_HEADER = 'x-forwarded-for'
 const CACHE_CONTROL_HEADER = 'cache-control'
 const NO_STORE_DIRECTIVE = 'no-store'
 const SET_COOKIE_HEADER = 'set-cookie'
-const BUSY_TIMEOUT_MILLISECONDS = 5000
 const EMPTY_COUNT = 0
 const ONE_ROW = 1
 const ONE_VOTE = 1
@@ -67,8 +63,6 @@ const WARN_LOG_LEVEL = 'warn'
 const PANEL_LOGIN_FAILED_EVENT = 'panel_login_failed'
 const PANEL_LOGIN_SUCCEEDED_EVENT = 'panel_login_succeeded'
 const EDITION_RESET_EVENT = 'edition_reset'
-const COUNT_SESSIONS_SQL = 'SELECT COUNT(*) AS total FROM sessions'
-const COUNT_ANSWERS_SQL = 'SELECT COUNT(*) AS total FROM answers'
 const FIRST_OPTION: OptionPosition = 1
 
 type RequestOptions = {
@@ -80,18 +74,13 @@ type RequestOptions = {
   forwardedFor?: string
 }
 
-type TotalRow = {
-  total: number
-}
-
 type SeededPanel = {
   sessionId: string
   panelCookie: string
 }
 
-let directoryPath: string
-let databasePath: string
-let previousDatabasePath: string | undefined
+let sessions: InMemorySessionRepository
+let previousSessionStore: string | undefined
 let previousPublicUrl: string | undefined
 let previousPanelPassword: string | undefined
 let previousCookieSecret: string | undefined
@@ -126,11 +115,11 @@ function createRequest(path: string, options: RequestOptions): Request {
   })
 }
 
-function postSession(): Response {
+function postSession(): Promise<Response> {
   return createParticipant(createRequest('/api/sessoes', { method: 'POST', origin: PUBLIC_ORIGIN }))
 }
 
-function getSession(sessionId: string): Response {
+function getSession(sessionId: string): Promise<Response> {
   return readCurrentSession(
     createRequest('/api/sessoes/atual', {
       method: 'GET',
@@ -168,7 +157,7 @@ function postLogin(
   )
 }
 
-function getResults(cookie?: string, origin: string | null = null): Response {
+function getResults(cookie?: string, origin: string | null = null): Promise<Response> {
   return readPanelResults(
     createRequest('/api/painel/resultados', {
       method: 'GET',
@@ -210,55 +199,13 @@ function readCookiePair(response: Response): string {
 }
 
 async function seedPanel(): Promise<SeededPanel> {
-  const created = postSession()
+  const created = await postSession()
   const sessionId = readCreatedSessionId(created)
   const saved = await putAnswer(sessionId)
   expect(saved.status).toBe(HTTP_OK)
   const login = await postLogin(PANEL_PASSWORD)
   expect(login.status).toBe(HTTP_OK)
   return { sessionId, panelCookie: readCookiePair(login) }
-}
-
-function countRows(path: string, countQuery: string): number {
-  if (!existsSync(path)) {
-    return EMPTY_COUNT
-  }
-  const database = new SqliteDatabase(path)
-  try {
-    database.pragma(`busy_timeout = ${BUSY_TIMEOUT_MILLISECONDS}`)
-    const row = database.prepare(countQuery).get()
-    if (!isTotalRow(row)) {
-      return EMPTY_COUNT
-    }
-    return row.total
-  } finally {
-    database.close()
-  }
-}
-
-function isTotalRow(row: unknown): row is TotalRow {
-  if (typeof row !== 'object') {
-    return false
-  }
-  if (row === null) {
-    return false
-  }
-  if (!('total' in row)) {
-    return false
-  }
-  return typeof row.total === 'number'
-}
-
-function readDatabaseText(path: string): string {
-  const files = [path, `${path}-wal`, `${path}-shm`]
-  const chunks: string[] = []
-  for (const file of files) {
-    if (!existsSync(file)) {
-      continue
-    }
-    chunks.push(readFileSync(file).toString('utf8'))
-  }
-  return chunks.join('\n')
 }
 
 async function captureStdout(action: () => Promise<void>): Promise<string> {
@@ -347,16 +294,16 @@ function createVotedSnapshot(): ResultsSnapshot {
 describe('panel routes', () => {
   beforeEach(() => {
     clearPasswordFailures()
-    directoryPath = mkdtempSync(join(tmpdir(), TEMP_DIRECTORY_PREFIX))
-    databasePath = join(directoryPath, 'event.sqlite')
-    previousDatabasePath = process.env.DATABASE_PATH
+    previousSessionStore = process.env[SESSION_STORE_VARIABLE]
     previousPublicUrl = process.env.PUBLIC_URL
     previousPanelPassword = process.env.PANEL_PASSWORD
     previousCookieSecret = process.env.COOKIE_SECRET
-    process.env.DATABASE_PATH = databasePath
+    process.env[SESSION_STORE_VARIABLE] = MEMORY_SESSION_STORE
     process.env.PUBLIC_URL = PUBLIC_URL
     process.env.PANEL_PASSWORD = PANEL_PASSWORD
     process.env.COOKIE_SECRET = COOKIE_SECRET
+    closeSessionRepositories()
+    sessions = readMemoryRepository()
   })
 
   afterEach(() => {
@@ -364,27 +311,26 @@ describe('panel routes', () => {
       closeSessionRepositories()
     } finally {
       clearPasswordFailures()
-      restoreEnv('DATABASE_PATH', previousDatabasePath)
+      restoreEnv(SESSION_STORE_VARIABLE, previousSessionStore)
       restoreEnv('PUBLIC_URL', previousPublicUrl)
       restoreEnv('PANEL_PASSWORD', previousPanelPassword)
       restoreEnv('COOKIE_SECRET', previousCookieSecret)
-      rmSync(directoryPath, { recursive: true, force: true })
     }
   })
 
-  it('opens the questionnaire without the panel password', () => {
-    const created = postSession()
+  it('opens the questionnaire without the panel password', async () => {
+    const created = await postSession()
     const sessionId = readCreatedSessionId(created)
     expect(created.status).toBe(HTTP_OK)
     expect(created.headers.get(SET_COOKIE_HEADER)).not.toContain(`${PANEL_COOKIE_NAME}=`)
-    expect(getSession(sessionId).status).toBe(HTTP_OK)
+    expect((await getSession(sessionId)).status).toBe(HTTP_OK)
   })
 
   it('rejects a wrong password without a cookie and hides the totals', async () => {
     const short = await postLogin(SHORT_PASSWORD)
     const sameLength = await postLogin(SAME_LENGTH_WRONG)
     const numeric = await postLogin(1)
-    const hidden = getResults()
+    const hidden = await getResults()
     const shortBody: unknown = await short.json()
     const hiddenBody: unknown = await hidden.json()
     expect(SHORT_PASSWORD.length).not.toBe(PANEL_PASSWORD.length)
@@ -407,7 +353,7 @@ describe('panel routes', () => {
 
   it('accepts the password and returns the five counts of each question', async () => {
     const seeded = await seedPanel()
-    const results = getResults(seeded.panelCookie)
+    const results = await getResults(seeded.panelCookie)
     const body: unknown = await results.json()
     expect(results.status).toBe(HTTP_OK)
     expect(results.headers.get(SET_COOKIE_HEADER)).toBeNull()
@@ -420,10 +366,10 @@ describe('panel routes', () => {
 
   it('returns 401 when the panel cookie is missing or forged', async () => {
     const seeded = await seedPanel()
-    const missing = getResults()
-    const participantOnly = getResults(`${SESSION_COOKIE_NAME}=${seeded.sessionId}`)
-    const forged = getResults(`${PANEL_COOKIE_NAME}=forged-token`)
-    const foreignOrigin = getResults(seeded.panelCookie, FOREIGN_ORIGIN)
+    const missing = await getResults()
+    const participantOnly = await getResults(`${SESSION_COOKIE_NAME}=${seeded.sessionId}`)
+    const forged = await getResults(`${PANEL_COOKIE_NAME}=forged-token`)
+    const foreignOrigin = await getResults(seeded.panelCookie, FOREIGN_ORIGIN)
     expect(missing.status).toBe(HTTP_UNAUTHORIZED)
     expect(await missing.json()).toEqual({ error: UNAUTHORIZED_ERROR })
     expect(participantOnly.status).toBe(HTTP_UNAUTHORIZED)
@@ -448,27 +394,27 @@ describe('panel routes', () => {
     expect(missingCookie.status).toBe(HTTP_UNAUTHORIZED)
     expect(foreign.status).toBe(HTTP_FORBIDDEN)
     expect(await foreign.json()).toEqual({ error: FORBIDDEN_ERROR })
-    expect(countRows(databasePath, COUNT_SESSIONS_SQL)).toBe(ONE_ROW)
-    expect(countRows(databasePath, COUNT_ANSWERS_SQL)).toBe(ONE_ROW)
-    expect(getSession(seeded.sessionId).status).toBe(HTTP_OK)
-    expect(await getResults(seeded.panelCookie).json()).toEqual(createVotedSnapshot())
+    expect(sessions.countSessions()).toBe(ONE_ROW)
+    expect(sessions.countAnswers()).toBe(ONE_ROW)
+    expect((await getSession(seeded.sessionId)).status).toBe(HTTP_OK)
+    expect(await (await getResults(seeded.panelCookie)).json()).toEqual(createVotedSnapshot())
   })
 
   it('deletes sessions and answers when reset is confirmed', async () => {
     const seeded = await seedPanel()
     const reset = await postReset(seeded.panelCookie, JSON.stringify({ confirm: true }))
     const resetBody: unknown = await reset.json()
-    const current = getSession(seeded.sessionId)
-    const results = getResults(seeded.panelCookie)
+    const current = await getSession(seeded.sessionId)
+    const results = await getResults(seeded.panelCookie)
     expect(reset.status).toBe(HTTP_OK)
     expect(reset.headers.get(SET_COOKIE_HEADER)).toBeNull()
     expect(resetBody).toEqual(createZeroSnapshot())
     expect(current.status).toBe(HTTP_NOT_FOUND)
     expect(await current.json()).toEqual({ error: NOT_FOUND_ERROR })
     expect(await results.json()).toEqual(createZeroSnapshot())
-    expect(countRows(databasePath, COUNT_SESSIONS_SQL)).toBe(EMPTY_COUNT)
-    expect(countRows(databasePath, COUNT_ANSWERS_SQL)).toBe(EMPTY_COUNT)
-    const reopened = postSession()
+    expect(sessions.countSessions()).toBe(EMPTY_COUNT)
+    expect(sessions.countAnswers()).toBe(EMPTY_COUNT)
+    const reopened = await postSession()
     expect(reopened.status).toBe(HTTP_OK)
     expect(readCreatedSessionId(reopened)).not.toBe(seeded.sessionId)
   })
@@ -512,7 +458,7 @@ describe('panel routes', () => {
   })
 
   it('logs panel access without the password, address, or session id', async () => {
-    const created = postSession()
+    const created = await postSession()
     const sessionId = readCreatedSessionId(created)
     const output = await captureStdout(async () => {
       const failed = await postLogin(WRONG_PASSWORD, PUBLIC_ORIGIN, {
@@ -543,7 +489,7 @@ describe('panel routes', () => {
     expect(output).not.toContain(FORWARDED_ADDRESS)
     expect(output).not.toContain(PERSON_NAME)
     expect(output).not.toContain(CONTACT_EMAIL)
-    const storedText = readDatabaseText(databasePath)
+    const storedText = sessions.storedText()
     expect(storedText).not.toContain(PANEL_PASSWORD)
     expect(storedText).not.toContain(WRONG_PASSWORD)
     expect(storedText).not.toContain(COOKIE_SECRET)
@@ -561,7 +507,7 @@ describe('panel routes', () => {
     expect(await foreignLogin.json()).toEqual({ error: FORBIDDEN_ERROR })
     expect(missingOrigin.status).toBe(HTTP_FORBIDDEN)
     expect(missingOrigin.headers.get(SET_COOKIE_HEADER)).toBeNull()
-    expect(countRows(databasePath, COUNT_SESSIONS_SQL)).toBe(ONE_ROW)
+    expect(sessions.countSessions()).toBe(ONE_ROW)
     expect(seeded.panelCookie).toContain(`${PANEL_COOKIE_NAME}=`)
   })
 

@@ -4,7 +4,7 @@ import {
   mapSessionRow,
   type AnswerTableRow,
   type SessionTableRow,
-} from '@/adapters/sqlite/session-row'
+} from '@/adapters/supabase/session-row'
 import {
   COMPLETED_SESSION_STATUS,
   FIRST_OPTION_POSITION,

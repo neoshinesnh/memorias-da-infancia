@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { Bagel_Fat_One, Nunito } from 'next/font/google'
 import type { ReactNode } from 'react'
+import { SiteHeader } from '@/components/site-header'
 import './globals.css'
 
 const titleFont = Bagel_Fat_One({
@@ -32,7 +33,10 @@ type RootLayoutProperties = {
 export default function RootLayout({ children }: RootLayoutProperties) {
   return (
     <html lang="pt-BR" className={`${titleFont.variable} ${bodyFont.variable}`}>
-      <body>{children}</body>
+      <body>
+        <SiteHeader />
+        {children}
+      </body>
     </html>
   )
 }
