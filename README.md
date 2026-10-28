@@ -130,10 +130,4 @@ Pais respondem perguntas sobre a própria infância pelo celular. Uma segunda te
 5. Tela de votação (mobile first).
 6. Tela do painel com gráficos.
 7. Testes dos casos de uso e teste com alguns pais.
-
-## 7. Fora do V1
-Login, múltiplas enquetes, perguntas editáveis por painel administrativo e exportação dos resultados.
-
----
-
-**Uma pergunta para fechar a regra de votação:** o uso será **presencial** (por exemplo, um QR code num evento, com o gráfico projetado num telão) ou **remoto** (cada pai responde de casa)? Isso define se o "uma vez por aparelho" funciona bem ou se vale algo mais restrito.
+ 
