@@ -1,4 +1,18 @@
-# Roteiro: Enquete de memórias da infância (V1)
+# Memórias da Infância
+
+Aplicativo web para um encontro presencial. Pais e mães respondem, no celular, a um questionário anônimo sobre a própria infância. Um painel com senha, projetado num telão, mostra na hora o total de cada pergunta.
+
+O roteiro é fixo: 10 perguntas, 5 opções cada, uma escolha por pergunta. Não há login nem cadastro. Cada aparelho ganha uma sessão própria. Quem fecha a página no meio continua de onde parou. Quem já concluiu vê que a participação já foi registrada e não vota de novo.
+
+## Telas
+
+**Questionário** em `/`
+
+Quem abre o endereço recebe uma sessão anônima. A tela mostra uma pergunta por vez, com o progresso "Pergunta N de 10". Escolher uma opção grava a resposta e avança. Antes de concluir, dá para voltar e trocar uma escolha. Na última pergunta, a tela mostra "Obrigado pelas suas respostas!".
+
+**Painel** em `/painel`
+
+A entrada pede a senha de `PANEL_PASSWORD`. O telão mostra um gráfico de barras por pergunta, o contador "X participando / Y finalizaram", o QR code do questionário e a rotação automática entre as perguntas. O operador pausa a rotação, escolhe uma pergunta na mão e zera os resultados depois de confirmar. Os totais chegam pelo canal ao vivo do processo Node. Se esse canal cair, o painel continua lendo o Supabase.
 
 ## Como rodar
 
@@ -35,11 +49,11 @@ O app é um processo Next.js. Sessões e respostas ficam no Supabase.
    ```
 
    - `SUPABASE_URL` é a URL do projeto no Supabase.
-   - `SUPABASE_SECRET_KEY` é a chave secreta do servidor (`service_role` ou secret key). Ela não vai para o navegador.
-   - `DATABASE_URL` é a connection string do Postgres na porta 5432 (conexão direta ou session pooler), em Project Settings → Database. A porta 6543 é o transaction pooler e não serve para este comando. Se a senha tiver `@`, `#` ou `:`, troque esses caracteres pelo código URL (`@` vira `%40`).
-   - `PUBLIC_URL` tem de ser o mesmo endereço que o navegador usa, inclusive a porta. O app compara o cabeçalho `Origin` com essa URL.
+   - `SUPABASE_SECRET_KEY` é a chave secreta do servidor (`service_role` ou secret key). Ela fica só no servidor.
+   - `DATABASE_URL` é a connection string do Postgres na porta 5432 (conexão direta ou session pooler), em Project Settings → Database. A porta 6543 é o transaction pooler e este comando de migração não a usa. Se a senha tiver `@`, `#` ou `:`, troque esses caracteres pelo código URL (`@` vira `%40`).
+   - `PUBLIC_URL` é o endereço que o navegador usa, inclusive a porta. O app compara o cabeçalho `Origin` com essa URL. Se o valor for o IP da rede, abra o painel nesse IP. `localhost` é outra origem, e a entrada é recusada mesmo com a senha certa.
    - `PANEL_PASSWORD` é a senha da tela `/painel`.
-   - `COOKIE_SECRET` precisa ter pelo menos 32 bytes. Gere um valor com `openssl rand -base64 32` e cole no `.env`.
+   - `COOKIE_SECRET` precisa ter pelo menos 32 bytes. Gere um valor com `openssl rand -base64 32`.
 
 4. Crie as tabelas no Supabase:
 
@@ -47,7 +61,7 @@ O app é um processo Next.js. Sessões e respostas ficam no Supabase.
    npm run migrate
    ```
 
-   O comando aplica os arquivos de `supabase/migrations` em ordem e registra o que já rodou. Na segunda execução, não reaplica o que já foi gravado.
+   O comando aplica os arquivos de `supabase/migrations` em ordem e registra o que já rodou. Na segunda execução, deixa de lado o que já foi gravado.
 
 5. Suba o servidor de desenvolvimento:
 
@@ -55,12 +69,10 @@ O app é um processo Next.js. Sessões e respostas ficam no Supabase.
    npm run dev
    ```
 
-6. Abra no navegador o mesmo endereço de `PUBLIC_URL`, inclusive a porta. Com o exemplo acima:
+6. Abra no navegador o mesmo endereço de `PUBLIC_URL`:
 
    - Questionário: [http://localhost:3050](http://localhost:3050)
-   - Painel: [http://localhost:3050/painel](http://localhost:3050/painel) (pede `PANEL_PASSWORD`)
-
-   Se `PUBLIC_URL` for o IP da rede, abra o painel nesse IP. `localhost` é outra origem, e a entrada é recusada mesmo com a senha certa.
+   - Painel: [http://localhost:3050/painel](http://localhost:3050/painel)
 
 Para a versão de produção, no mesmo diretório e com o mesmo `.env`:
 
@@ -69,65 +81,29 @@ npm run build
 npm start
 ```
 
-O canal ao vivo do painel continua no processo Node. A consulta de reserva lê o Supabase, então o telão acompanha os votos mesmo se o fluxo instantâneo cair.
+Os dois comandos usam a porta 3050.
 
-## 1. Objetivo
-Pais respondem perguntas sobre a própria infância pelo celular. Uma segunda tela mostra, em tempo real, o gráfico das respostas de todos.
-
-## 2. Telas
-
-**Tela 1: Votação (link do pai)**
-1. Ao abrir o link, cria-se uma sessão nova e anônima.
-2. Aparece uma pergunta por vez, com 5 opções.
-3. Há uma barra de progresso ("Pergunta 3 de 10").
-4. Ao escolher uma opção, avança para a próxima.
-5. Na última, aparece: *"Obrigado pelas suas respostas!"*
-
-**Tela 2: Painel em tempo real**
-1. Mostra um gráfico de barras por pergunta, atualizado a cada novo voto.
-2. Exibe o contador "X pais participando / Y finalizaram".
-3. Pode alternar automaticamente entre as perguntas (modo telão) ou permitir escolher uma manualmente.
-
-## 3. Sugestão de perguntas (10 × 5 opções)
+## Perguntas
 
 1. **Com qual brinquedo você mais brincava?** Pião · Pular corda · Bolinha de gude · Pipa · Boneca/carrinho
 2. **Onde você morava na infância?** Fazenda/sítio · Cidade pequena · Cidade grande · Subúrbio · Mudei muito
-3. **Qual brincadeira de rua era sua favorita?** Esconde-esconde · Pega-pega · Queimada · Amarelinha · Futebol
-4. **Como você ia para a escola?** A pé · De bicicleta · De ônibus · De carro · Transporte escolar
-5. **O que você gostava de fazer nas férias?** Viajar para casa de parentes · Brincar na rua · Ir à praia/rio · Ficar em casa · Ajudar a família
-6. **Qual era a refeição mais marcante da casa?** Almoço de domingo · Café da tarde · Feijão com arroz · Comida da avó · Lanche na rua
-7. **Qual era seu programa de TV/rádio favorito?** Desenhos · Novelas · Programas de auditório · Rádio · Quase não via
-8. **Quem mais cuidava de você?** Mãe · Pai · Avós · Irmãos mais velhos · Outros parentes
-9. **Onde você passava a maior parte do tempo livre?** Rua · Quintal · Casa de vizinhos · Igreja · Dentro de casa
-10. **Qual lembrança é a mais forte?** Brincar com amigos · Festas de família · Histórias contadas · Passeios · Rotina de casa
+3. **Como você ia para a escola?** A pé · De bicicleta · De ônibus ou van · De carro · Eu estudava em casa
+4. **O que você mais fazia depois da escola?** Brincar na rua · Ver televisão · Ajudar em casa · Fazer lição · Jogar bola
+5. **Qual guloseima você mais pedia?** Pirulito · Chiclete · Paçoca · Sorvete · Bala
+6. **O que mais passava na TV da sua casa?** Desenho · Novela · Futebol · Programa de auditório · Quase não tinha TV
+7. **Qual brincadeira de rua era a sua?** Esconde-esconde · Pega-pega · Amarelinha · Queimada · Futebol de rua
+8. **Com quem você mais brincava?** Irmãos · Vizinhos · Primos · Colegas da escola · Quase sempre sozinho
+9. **O que não faltava no lanche?** Pão com manteiga · Fruta · Bolacha · Mingau ou leite · O que tivesse em casa
+10. **Como era o domingo da sua infância?** Almoço em família · Missa ou culto · Visita aos parentes · Brincar o dia inteiro · Cada domingo era diferente
 
-## 4. Regra de votação: minha recomendação
+## Comandos
 
-**Uma participação por aparelho, com retomada de onde parou.**
-
-- Guardar o ID da sessão no navegador (cookie/localStorage).
-- Se o pai fechar a página no meio, ao voltar ele **continua da pergunta em que parou**.
-- Se ele já terminou, ao reabrir vê a tela de agradecimento, sem votar de novo.
-- Sem login nem cadastro.
-
-**Trade-offs:**
-- *Sessão aberta (qualquer um vota quantas vezes quiser):* é o mais simples, mas distorce o gráfico e qualquer pessoa pode "encher" uma opção.
-- *Restrição por aparelho (recomendada):* é leve, mas não é à prova de fraude, porque abrir em aba anônima permite votar de novo. Para uma enquete entre pais, o risco é baixo.
-- *Restrição forte (login, telefone ou código):* é mais confiável, mas adiciona atrito e foge do "bem simples" do V1.
-- **Teste:** criar uma rota ou botão de administrador para zerar os votos.
-
-## 5. Arquitetura (alto nível, hexagonal)
-
-- **Domínio:** Enquete, Pergunta, Opção, Sessão e Resposta, com as regras "uma resposta por pergunta", "sessão finalizada não aceita novos votos" e "retomar de onde parou".
-- **Portas:** `RepositorioDeSessoes`, `RepositorioDeRespostas` e `PublicadorDeResultados` (para o tempo real).
-- **Adaptadores:** HTTP/REST para a votação, banco de dados e SSE ou WebSocket para o painel.
-
-## 6. Etapas do V1
-1. Definir perguntas e opções finais.
-2. Modelar o domínio e os casos de uso: iniciar sessão, responder, finalizar e consultar resultados.
-3. API de votação e persistência.
-4. Canal de tempo real para o painel.
-5. Tela de votação (mobile first).
-6. Tela do painel com gráficos.
-7. Testes dos casos de uso e teste com alguns pais.
- 
+| Comando | O que faz |
+| --- | --- |
+| `npm run dev` | Sobe o app em desenvolvimento na porta 3050 |
+| `npm run migrate` | Aplica as migrações do Supabase |
+| `npm test` | Roda os testes unitários e de integração |
+| `npm run test:e2e` | Roda os testes de ponta a ponta com Playwright |
+| `npm run typecheck` | Confere os tipos do TypeScript |
+| `npm run build` | Gera a versão de produção |
+| `npm start` | Sobe a versão de produção na porta 3050 |
