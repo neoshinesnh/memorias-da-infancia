@@ -27,7 +27,7 @@ O app é um processo Next.js com SQLite no mesmo processo. Não há banco extern
 
    ```bash
    DATABASE_PATH=data/enquete.sqlite
-   PUBLIC_URL=http://localhost:3000
+   PUBLIC_URL=http://localhost:3050
    PANEL_PASSWORD=escolha-uma-senha
    COOKIE_SECRET=cole-aqui-o-resultado-do-openssl
    ```
@@ -45,8 +45,8 @@ O app é um processo Next.js com SQLite no mesmo processo. Não há banco extern
 
 5. Abra no navegador o mesmo endereço de `PUBLIC_URL`, inclusive a porta. Com o exemplo acima:
 
-   - Questionário: [http://localhost:3000](http://localhost:3000)
-   - Painel: [http://localhost:3000/painel](http://localhost:3000/painel) (pede `PANEL_PASSWORD`)
+   - Questionário: [http://localhost:3050](http://localhost:3050)
+   - Painel: [http://localhost:3050/painel](http://localhost:3050/painel) (pede `PANEL_PASSWORD`)
 
    Se `PUBLIC_URL` for o IP da rede, abra o painel nesse IP. `localhost` é outra origem, e a entrada é recusada mesmo com a senha certa.
 
